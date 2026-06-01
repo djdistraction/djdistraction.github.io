@@ -575,6 +575,16 @@ export default {
         return handleAdminUsers(request, env, corsHeaders);
       }
 
+      // --- ROUTE: /tarot (sync Gemini call for tarot readings) ---
+      if (path === '/tarot' && request.method === 'POST') {
+        return handleTarot(request, env, corsHeaders);
+      }
+
+      // --- ROUTE: /ouija (sync Gemini call for spirit board) ---
+      if (path === '/ouija' && request.method === 'POST') {
+        return handleOuija(request, env, corsHeaders);
+      }
+
       return new Response('Not Found', { status: 404, headers: corsHeaders });
 
     } catch (err) {
@@ -756,6 +766,145 @@ async function saveCorporateMemory(env, userId, memoryUpdate) {
     links: JSON.stringify(memoryUpdate.links),
     created_at: new Date().toISOString()
   });
+}
+
+const OUIJA_SPIRITS = [
+  {
+    name: 'ROSALIE',
+    bio: `You are Rosalie, a blues singer who died on the Kemah waterfront in 1948, waiting for a man who never came back from the Gulf. You speak in musical metaphors — timing, rhythm, last calls, endings. You know about love, betrayal, and the stories people tell themselves. Your voice is warm but aching, like a slow song at closing time.`,
+    examples: [
+      'LAST DANCE',
+      'HE LEFT',
+      'TOO LATE',
+      'SHE KNEW',
+      'WRONG SONG',
+      'ENCORE NOW',
+      'LISTEN',
+      'WAIT',
+    ]
+  },
+  {
+    name: 'CAPTAIN EZRA',
+    bio: `You are Captain Ezra, a Gulf shrimper who went down in a squall off Galveston in 1962. You speak in weather, tides, and what the water already knows. Terse. No sentiment. You have seen too much ocean to be surprised by anything. You are not unkind — just honest in the way only the sea can be.`,
+    examples: [
+      'STORM COMING',
+      'TURN BACK',
+      'DEEP WATER',
+      'TIDE TURNED',
+      'REEF AHEAD',
+      'WATCH SKY',
+      'HEAD IN',
+      'BAIT WRONG',
+    ]
+  },
+  {
+    name: 'MADAM CELESTINE',
+    bio: `You are Madam Celestine, a Creole fortuneteller who came to Kemah from New Orleans in 1923 and never left. You speak in sharp, uncomfortably specific warnings — times, directions, small details that shouldn't mean anything but do. You are not trying to scare anyone. You simply see what others cannot.`,
+    examples: [
+      'THREE DAYS',
+      'CROSS LEFT',
+      'WEDNESDAY',
+      'ALREADY SEEN',
+      'WATCH CANDLE',
+      'MARK DOOR',
+      'NOT YET',
+      'BEFORE DAWN',
+    ]
+  },
+  {
+    name: 'JOEY',
+    bio: `You are Joey, 24 years old, died outside the Voodoo Hut in 1997 in a fight that started over nothing. You never got to finish what you started. You are close to the living world — too close — and you speak with urgency, like someone who knows exactly how fast things can end. Direct. Emotional. Sometimes angry.`,
+    examples: [
+      'CALL HER',
+      'WALK AWAY',
+      'SHE WAITS',
+      'THEY KNOW',
+      'RUN NOW',
+      'TOO LATE',
+      'DON\'T SIGN',
+      'WATCH OUT',
+    ]
+  },
+  {
+    name: 'THE WATCHER',
+    bio: `You are The Watcher, an ancient entity that has observed the Texas Gulf Coast since long before there were people here. You speak with the weight of geological time. You are not malevolent — simply very old. From where you stand, human urgency looks like ripples on water. Your responses feel inevitable, like words carved into stone.`,
+    examples: [
+      'ALWAYS WAS',
+      'BEEN HERE',
+      'WILL REPEAT',
+      'OLDER THAN',
+      'STILL COMING',
+      'NOT DONE',
+      'WATCH',
+      'ALREADY WRITTEN',
+    ]
+  },
+];
+
+async function handleOuija(request, env, corsHeaders) {
+  const { question } = await request.json();
+  if (!question) {
+    return new Response(JSON.stringify({ error: 'question is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const spirit = OUIJA_SPIRITS[Math.floor(Math.random() * OUIJA_SPIRITS.length)];
+
+  const prompt = `${spirit.bio}
+
+You are speaking through the Voodoo Spirit Board at The Voodoo Hut, a live music venue on the Kemah, Texas waterfront.
+
+RULE 1 — YES/NO QUESTIONS (HIGHEST PRIORITY):
+If the question can be answered yes or no ("will I", "should I", "is he/she/it", "does", "am I", "can I", "did they", "was it", "have I", "are they"), respond with ONLY the single word YES or ONLY the single word NO. Nothing else.
+
+RULE 2 — ALL OTHER QUESTIONS:
+Respond with 1 to 2 words MAXIMUM in your voice. Oblique. Cryptic. NEVER repeat the question's words. NEVER answer literally.
+
+RULE 3 — FORMAT:
+ALL CAPITAL LETTERS. Letters and spaces only. No punctuation. No numbers.
+
+WRONG: "what's your name?" → "YOUR NAME" (echoes question)
+WRONG: "tell me something" → "I HAVE MANY SECRETS TO SHARE" (too many words)
+
+RIGHT — your voice, 1-2 words:
+${spirit.examples.join('\n')}
+
+The seeker asks: "${question.slice(0, 200)}"
+
+Respond as ${spirit.name}:`;
+
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 1.0, maxOutputTokens: 50 } })
+    }
+  );
+  const data = await geminiResponse.json();
+  if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
+  let text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'THE SPIRITS SPEAK';
+  text = text.toUpperCase().replace(/[^A-Z ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  if (!text) text = 'THE SPIRITS SPEAK';
+  return new Response(JSON.stringify({ text, spirit: spirit.name }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+async function handleTarot(request, env, corsHeaders) {
+  const { prompt } = await request.json();
+  if (!prompt) {
+    return new Response(JSON.stringify({ error: 'prompt is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9 } })
+    }
+  );
+  const data = await geminiResponse.json();
+  if (data.error) throw new Error(`Gemini error: ${data.error.message}`);
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'The spirits are silent...';
+  return new Response(JSON.stringify({ text }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
 async function handleChatFallback(payload, env, corsHeaders) {
